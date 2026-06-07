@@ -1,7 +1,7 @@
-const { getDb } = require('../../../_db');
-const { setCors } = require('../../../_auth');
+import { getDb } from '../../../_db.js';
+import { setCors } from '../../../_auth.js';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
@@ -16,18 +16,16 @@ module.exports = async (req, res) => {
 
   let matchedIds = [];
   if (descriptor && descriptor.length > 0) {
-    matchedIds = photos
-      .filter(p => {
-        if (!p.faceDescriptors || p.faceDescriptors.length === 0) return false;
-        return p.faceDescriptors.some(fd => {
-          const dist = Math.sqrt(fd.reduce((sum, v, i) => sum + Math.pow(v - descriptor[i], 2), 0));
-          return dist < 0.6;
-        });
-      })
-      .map(p => p._id.toString());
+    matchedIds = photos.filter(p => {
+      if (!p.faceDescriptors?.length) return false;
+      return p.faceDescriptors.some(fd => {
+        const dist = Math.sqrt(fd.reduce((sum, v, i) => sum + Math.pow(v - descriptor[i], 2), 0));
+        return dist < 0.6;
+      });
+    }).map(p => p._id.toString());
   } else {
     matchedIds = photos.map(p => p._id.toString());
   }
 
   res.json({ matchedIds });
-};
+}

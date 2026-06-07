@@ -1,7 +1,7 @@
-const { getDb } = require('../_db');
-const { verifyToken, setCors } = require('../_auth');
+import { getDb } from '../_db.js';
+import { verifyToken, setCors } from '../_auth.js';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
   if (req.method !== 'DELETE') return res.status(405).json({ error: 'Method not allowed' });
@@ -19,6 +19,5 @@ module.exports = async (req, res) => {
 
   await db.collection('photos').deleteOne({ _id: photoId });
   await db.collection('events').updateOne({ _id: photo.event }, { $inc: { photoCount: -1 } });
-
   res.json({ message: 'Deleted' });
-};
+}

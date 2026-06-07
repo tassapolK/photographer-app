@@ -1,8 +1,8 @@
-const { getDb } = require('../_db');
-const { verifyToken, setCors } = require('../_auth');
-const { v4: uuidv4 } = require('uuid');
+import { getDb } from '../_db.js';
+import { verifyToken, setCors } from '../_auth.js';
+import { v4 as uuidv4 } from 'uuid';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -12,26 +12,16 @@ module.exports = async (req, res) => {
   const db = await getDb();
 
   if (req.method === 'GET') {
-    const events = await db.collection('events').find({ photographer: user.id }).toArray();
+    const events = await db.collection('events').find({ photographer: user.id }).sort({ createdAt: -1 }).toArray();
     return res.json(events);
   }
 
   if (req.method === 'POST') {
     const { title, description, date } = req.body;
-    const event = {
-      _id: uuidv4(),
-      slug: uuidv4(),
-      title,
-      description,
-      date,
-      photographer: user.id,
-      photoCount: 0,
-      coverPhoto: '',
-      createdAt: new Date()
-    };
+    const event = { _id: uuidv4(), slug: uuidv4(), title, description, date, photographer: user.id, photoCount: 0, coverPhoto: '', createdAt: new Date() };
     await db.collection('events').insertOne(event);
     return res.status(201).json(event);
   }
 
   res.status(405).json({ error: 'Method not allowed' });
-};
+}

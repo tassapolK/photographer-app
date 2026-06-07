@@ -1,7 +1,7 @@
-const { getDb } = require('../../_db');
-const { setCors } = require('../../_auth');
+import { getDb } from '../../_db.js';
+import { setCors } from '../../_auth.js';
 
-module.exports = async (req, res) => {
+export default async function handler(req, res) {
   setCors(res);
   if (req.method === 'OPTIONS') return res.status(200).end();
 
@@ -12,4 +12,4 @@ module.exports = async (req, res) => {
 
   const photos = await db.collection('photos').find({ event: event._id }).toArray();
   res.json(photos);
-};
+}
