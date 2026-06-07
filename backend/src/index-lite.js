@@ -15,6 +15,17 @@ const photos = new Map();
 app.use(cors({ origin: '*', credentials: true }));
 app.use(express.json({ limit: '50mb' }));
 
+// Explicit CORS headers
+app.use((req, res, next) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  res.header('Access-Control-Allow-Methods', 'GET, POST, PUT, DELETE, OPTIONS');
+  res.header('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+  if (req.method === 'OPTIONS') {
+    return res.sendStatus(200);
+  }
+  next();
+});
+
 // Middleware
 const requireAuth = (req, res, next) => {
   const token = req.headers.authorization?.slice(7);
