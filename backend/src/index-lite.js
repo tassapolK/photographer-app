@@ -170,7 +170,20 @@ app.get('/api/events/public/:slug', (req, res) => {
   res.json({ ...event, photographer: { name: photographer.name } });
 });
 
-app.get('/health', (req, res) => res.json({ status: 'ok', mode: 'mock' }));
+app.get('/health', (req, res) => res.json({ status: 'ok', mode: 'mock', timestamp: new Date().toISOString() }));
 
-const PORT = process.env.PORT || 5000;
-app.listen(PORT, () => console.log(`✅ Mock server running on port ${PORT}`));
+// Root route
+app.get('/', (req, res) => res.json({ app: 'PhotoPro API', status: 'running', version: '1.0.0' }));
+
+const PORT = process.env.PORT || 10000;
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`✅ Mock server running on port ${PORT}`);
+  // Self-ping every 14 minutes to prevent Render free tier from sleeping
+  const SELF_URL = process.env.RENDER_EXTERNAL_URL || `http://localhost:${PORT}`;
+  setInterval(() => {
+    const http = SELF_URL.startsWith('https') ? require('https') : require('http');
+    http.get(`${SELF_URL}/health`, (res) => {
+      console.log(`[keepalive] ping ${res.statusCode}`);
+    }).on('error', () => {});
+  }, 14 * 60 * 1000);
+});
