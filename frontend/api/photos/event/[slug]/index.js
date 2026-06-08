@@ -45,5 +45,11 @@ export default async function handler(req, res) {
     db.collection('photos').countDocuments({ event: event._id }),
   ]);
 
+  // Cache paginated customer gallery at Vercel CDN edge.
+  // Unauthenticated = public gallery view; 30s fresh, 2min stale-while-revalidate.
+  if (!req.headers.authorization) {
+    res.setHeader('Cache-Control', 'public, s-maxage=30, stale-while-revalidate=120');
+  }
+
   res.json({ photos, total, page, limit, hasMore: skip + photos.length < total });
 }

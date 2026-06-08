@@ -491,12 +491,29 @@ export default function CustomerGallery() {
     }
   };
 
-  const isLoading = eventLoading || photosLoading;
-
-  if (isLoading) {
+  // ── Loading skeleton — visible while API is cold-starting ───────────────────
+  // Matches the real layout so there's no layout shift when data arrives.
+  if (eventLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <Loader size={40} className="animate-spin text-primary" />
+      <div className="min-h-screen max-w-2xl mx-auto pb-24 animate-pulse">
+        {/* Cover image placeholder */}
+        <div className="w-full h-48 bg-white/5" />
+        {/* Title */}
+        <div className="px-4 pt-4 pb-3 space-y-2">
+          <div className="h-5 bg-white/10 rounded-lg w-48" />
+          <div className="h-3 bg-white/5 rounded-lg w-64" />
+        </div>
+        {/* Action bar */}
+        <div className="px-4 pb-3 flex gap-2">
+          <div className="h-10 bg-white/5 rounded-xl flex-1" />
+          <div className="h-10 bg-white/5 rounded-xl w-24" />
+        </div>
+        {/* Photo grid shimmer */}
+        <div className="grid grid-cols-3 gap-0.5 px-0.5">
+          {Array.from({ length: 12 }).map((_, i) => (
+            <div key={i} className="aspect-square bg-white/5" />
+          ))}
+        </div>
       </div>
     );
   }

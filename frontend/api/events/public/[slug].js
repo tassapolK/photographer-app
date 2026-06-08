@@ -11,5 +11,9 @@ export default async function handler(req, res) {
   if (!event) return res.status(404).json({ error: 'Not found' });
 
   const photographer = await db.collection('photographers').findOne({ id: event.photographer });
+
+  // Cache at Vercel CDN edge — event info rarely changes.
+  // First visitor pays the cold-start cost; everyone after gets instant edge response.
+  res.setHeader('Cache-Control', 'public, s-maxage=300, stale-while-revalidate=600');
   res.json({ ...event, photographer: { name: photographer?.name || 'Unknown' } });
 }
