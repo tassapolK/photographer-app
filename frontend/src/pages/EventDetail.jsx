@@ -72,6 +72,28 @@ export default function EventDetail() {
     onSuccess: () => qc.invalidateQueries(['photos', id]),
   });
 
+  // Resize image to max 1920px and convert to base64 JPEG
+  const resizeToBase64 = (file) => new Promise((resolve) => {
+    const MAX = 1920;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onload = () => {
+        const canvas = document.createElement('canvas');
+        let { width, height } = img;
+        if (width > MAX || height > MAX) {
+          if (width > height) { height = Math.round(height * MAX / width); width = MAX; }
+          else { width = Math.round(width * MAX / height); height = MAX; }
+        }
+        canvas.width = width; canvas.height = height;
+        canvas.getContext('2d').drawImage(img, 0, 0, width, height);
+        resolve({ data: canvas.toDataURL('image/jpeg', 0.80), width, height });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+
   const handleUpload = useCallback(async (files) => {
     const fileArray = Array.from(files);
     if (!fileArray.length) return;
@@ -79,35 +101,35 @@ export default function EventDetail() {
     setUploading(true);
     setUploadProgress({ done: 0, total: fileArray.length });
 
-    // Process files in batches of 5
-    const BATCH = 5;
+    // Process files in batches of 3
+    const BATCH = 3;
     for (let i = 0; i < fileArray.length; i += BATCH) {
       const batch = fileArray.slice(i, i + BATCH);
-      const formData = new FormData();
-      const faceData = {};
+      const photosPayload = [];
 
-      await Promise.all(batch.map(async (file, j) => {
-        formData.append('photos', file);
-        formData.append(`name_${j}`, file.name);
+      await Promise.all(batch.map(async (file) => {
+        try {
+          // Resize + convert to base64
+          const { data, width, height } = await resizeToBase64(file);
 
-        // Extract face descriptors client-side
-        if (!faceLoading) {
-          try {
-            const img = new Image();
-            img.src = URL.createObjectURL(file);
-            await new Promise(r => { img.onload = r; });
-            const descriptors = await detectDescriptors(img);
-            if (descriptors.length > 0) faceData[j] = descriptors;
-            URL.revokeObjectURL(img.src);
-          } catch { /* continue without face data */ }
-        }
+          // Extract face descriptors client-side
+          let faceDescriptors = [];
+          if (!faceLoading) {
+            try {
+              const img = new Image();
+              img.src = data;
+              await new Promise(r => { img.onload = r; });
+              faceDescriptors = await detectDescriptors(img);
+            } catch { /* skip face detection */ }
+          }
+
+          photosPayload.push({ data, name: file.name, width, height, faceDescriptors });
+        } catch (e) { console.error('File process error:', e); }
       }));
 
-      formData.append('faceData', JSON.stringify(faceData));
-
-      await api.post(`/photos/event/${event.slug}/upload`, formData, {
-        headers: { 'Content-Type': 'multipart/form-data' },
-      });
+      if (photosPayload.length > 0) {
+        await api.post(`/photos/event/${event.slug}/upload`, { photos: photosPayload });
+      }
 
       setUploadProgress(p => ({ ...p, done: Math.min(p.done + batch.length, fileArray.length) }));
     }
