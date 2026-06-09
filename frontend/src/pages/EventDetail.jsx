@@ -380,7 +380,7 @@ export default function EventDetail() {
             <button
               onClick={handleSelectFolder}
               disabled={uploading}
-              className="w-full py-2.5 rounded-xl border border-dashed border-white/10 hover:border-primary/30 hover:text-primary text-white/35 text-sm transition-all flex items-center justify-center gap-2 group disabled:opacity-40"
+              className="w-full py-2.5 rounded-xl border border-dashed border-white/30 hover:border-primary/60 hover:text-primary text-white/60 text-sm transition-all flex items-center justify-center gap-2 group disabled:opacity-40"
             >
               <FolderOpen size={15} className="group-hover:scale-110 transition-transform" />
               ผูกโฟลเดอร์อัตโนมัติ
