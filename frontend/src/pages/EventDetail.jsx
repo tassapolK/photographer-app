@@ -1,12 +1,25 @@
-import React, { useState, useRef, useCallback } from 'react';
+import React, { useState, useRef, useCallback, useEffect } from 'react';
 import { useParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import {
   ArrowLeft, Upload, QrCode, Scan, Trash2,
   CheckSquare, Square, X, Loader, AlertCircle,
+  FolderOpen, RefreshCw,
 } from 'lucide-react';
 import api from '../utils/api';
 import { useFaceApi } from '../hooks/useFaceApi';
+
+// ── localStorage helpers for folder-watch duplicate tracking ─────────────────
+// Each event gets its own "already uploaded" set, keyed by event._id.
+function getWatchUploaded(eventId) {
+  try { return new Set(JSON.parse(localStorage.getItem(`wf_${eventId}`) || '[]')); }
+  catch { return new Set(); }
+}
+function addWatchUploaded(eventId, names) {
+  const s = getWatchUploaded(eventId);
+  names.forEach(n => s.add(n));
+  localStorage.setItem(`wf_${eventId}`, JSON.stringify([...s]));
+}
 
 function QRModal({ eventId, onClose }) {
   const [qrData, setQrData] = useState(null);
@@ -60,6 +73,19 @@ export default function EventDetail() {
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const { loading: faceLoading, detectDescriptors } = useFaceApi();
+
+  // ── Folder watch state ────────────────────────────────────────────────────
+  const [watchDir, setWatchDir] = useState(null);       // FileSystemDirectoryHandle
+  const [scanStatus, setScanStatus] = useState('idle'); // 'idle' | 'scanning'
+  const [lastScan, setLastScan] = useState(null);       // Date of last scan
+  const [countdown, setCountdown] = useState(0);        // seconds until next auto-scan
+
+  // Refs keep interval callbacks free of stale closures
+  const watchIntervalRef = useRef(null);
+  const countdownIntervalRef = useRef(null);
+  const handleUploadRef = useRef(null);  // always points to latest handleUpload
+  const eventRef = useRef(null);         // latest event data
+  const uploadingRef = useRef(false);    // latest uploading state
 
   const { data: event } = useQuery({
     queryKey: ['event', id],
@@ -195,12 +221,104 @@ export default function EventDetail() {
     setUploading(false);
     if (errorNames.length > 0) {
       setUploadErrors([...errorNames]);
-      setFailedFiles([...errorFiles]); // store for retry
+      setFailedFiles([...errorFiles]);
     }
     qc.invalidateQueries(['photos', id]);
     qc.invalidateQueries(['event', id]);
     if (fileInput.current) fileInput.current.value = '';
+
+    return { failedList: errorFiles }; // used by doScan to track which files succeeded
   }, [event, faceLoading, detectDescriptors, id]);
+
+  // ── Keep refs in sync so interval callbacks always see latest values ──────
+  useEffect(() => { handleUploadRef.current = handleUpload; }, [handleUpload]);
+  useEffect(() => { eventRef.current = event; }, [event]);
+  useEffect(() => { uploadingRef.current = uploading; }, [uploading]);
+
+  // ── Scan folder: enumerate directory → find new images → upload ───────────
+  // Safe to use in setInterval — reads all state via refs, never captures stale closures.
+  const doScan = useCallback(async (dir) => {
+    const evt = eventRef.current;
+    if (!evt?._id || uploadingRef.current) return; // skip if no event or already uploading
+
+    setScanStatus('scanning');
+    const IMAGE_RE = /\.(jpe?g|png|webp|heic?|tiff?|bmp|gif)$/i;
+    const alreadyDone = getWatchUploaded(evt._id);
+    const newFiles = [];
+
+    try {
+      for await (const [name, handle] of dir.entries()) {
+        if (handle.kind === 'file' && IMAGE_RE.test(name) && !alreadyDone.has(name))
+          newFiles.push(await handle.getFile());
+      }
+    } catch (err) {
+      console.error('Folder scan error:', err);
+      setScanStatus('idle');
+      return;
+    }
+
+    setScanStatus('idle');
+    setLastScan(new Date()); // triggers countdown reset via useEffect
+
+    if (newFiles.length) {
+      const result = await handleUploadRef.current(newFiles);
+      // Mark only successfully uploaded files (not the ones that failed)
+      const failedNames = new Set((result?.failedList ?? []).map(f => f.name));
+      const okNames = newFiles.filter(f => !failedNames.has(f.name)).map(f => f.name);
+      if (okNames.length) addWatchUploaded(evt._id, okNames);
+    }
+  }, []); // [] — stable, uses refs only
+
+  // ── Link a local folder ───────────────────────────────────────────────────
+  const handleSelectFolder = async () => {
+    if (!('showDirectoryPicker' in window)) {
+      alert('ฟีเจอร์นี้ใช้ได้กับ Chrome หรือ Edge บนคอมพิวเตอร์เท่านั้นครับ');
+      return;
+    }
+    try {
+      const dir = await window.showDirectoryPicker({ mode: 'read' });
+      setWatchDir(dir);
+      // Pre-mark photos already in this event so they don't get re-uploaded
+      if (event?._id && photos.length)
+        addWatchUploaded(event._id, photos.map(p => p.name).filter(Boolean));
+      await doScan(dir); // run first scan immediately
+    } catch (e) {
+      if (e.name !== 'AbortError') console.error('showDirectoryPicker:', e);
+    }
+  };
+
+  const stopWatching = () => {
+    clearInterval(watchIntervalRef.current);
+    clearInterval(countdownIntervalRef.current);
+    setWatchDir(null);
+    setScanStatus('idle');
+    setCountdown(0);
+  };
+
+  // Start / restart the 5-min interval whenever a folder is linked
+  useEffect(() => {
+    if (!watchDir) return;
+    const INTERVAL = 5 * 60 * 1000;
+    setCountdown(INTERVAL / 1000);
+    watchIntervalRef.current = setInterval(() => doScan(watchDir), INTERVAL);
+    countdownIntervalRef.current = setInterval(() => setCountdown(s => Math.max(0, s - 1)), 1000);
+    return () => {
+      clearInterval(watchIntervalRef.current);
+      clearInterval(countdownIntervalRef.current);
+    };
+  }, [watchDir, doScan]);
+
+  // Reset countdown to 5:00 after every scan (auto or manual)
+  useEffect(() => { if (lastScan) setCountdown(300); }, [lastScan]);
+
+  // Cleanup on unmount
+  useEffect(() => () => {
+    clearInterval(watchIntervalRef.current);
+    clearInterval(countdownIntervalRef.current);
+  }, []);
+
+  const fmtCountdown = (sec) =>
+    `${Math.floor(sec / 60)}:${String(sec % 60).padStart(2, '0')}`;
 
   const toggleSelect = (photoId) => {
     setSelectedIds(prev => {
@@ -234,7 +352,7 @@ export default function EventDetail() {
       </div>
 
       {/* Action Bar */}
-      <div className="flex gap-3 mb-5">
+      <div className="flex gap-3 mb-3">
         <button
           className="btn-primary flex-1 flex items-center justify-center gap-2"
           onClick={() => fileInput.current.click()}
@@ -254,6 +372,68 @@ export default function EventDetail() {
         <input ref={fileInput} type="file" multiple accept="image/*" className="hidden"
           onChange={e => handleUpload(e.target.files)} />
       </div>
+
+      {/* ── Folder Auto-Watch ──────────────────────────────────────────────── */}
+      {'showDirectoryPicker' in window && (
+        <div className="mb-4">
+          {!watchDir ? (
+            /* Link folder button */
+            <button
+              onClick={handleSelectFolder}
+              disabled={uploading}
+              className="w-full py-2.5 rounded-xl border border-dashed border-white/10 hover:border-primary/30 hover:text-primary text-white/35 text-sm transition-all flex items-center justify-center gap-2 group disabled:opacity-40"
+            >
+              <FolderOpen size={15} className="group-hover:scale-110 transition-transform" />
+              ผูกโฟลเดอร์อัตโนมัติ
+            </button>
+          ) : (
+            /* Active watch panel */
+            <div className="bg-primary/10 border border-primary/20 rounded-xl p-3">
+              {/* Folder name + live status dot */}
+              <div className="flex items-center gap-2 mb-1.5">
+                <FolderOpen size={15} className="text-primary flex-shrink-0" />
+                <span className="text-sm font-medium text-white truncate flex-1">
+                  {watchDir.name}
+                </span>
+                <div className={`w-2 h-2 rounded-full flex-shrink-0 transition-colors ${
+                  scanStatus === 'scanning' ? 'bg-yellow-400 animate-pulse' : 'bg-green-400'
+                }`} />
+              </div>
+
+              {/* Status text */}
+              <p className="text-xs text-white/45 mb-2.5">
+                {scanStatus === 'scanning' ? (
+                  '🔍 กำลังสแกนโฟลเดอร์...'
+                ) : lastScan ? (
+                  `สแกนล่าสุด ${lastScan.toLocaleTimeString('th-TH', { hour: '2-digit', minute: '2-digit' })}` +
+                  (countdown > 0 ? ` · ครั้งถัดไปในอีก ${fmtCountdown(countdown)} น.` : '')
+                ) : (
+                  'รอสแกนครั้งแรก...'
+                )}
+              </p>
+
+              {/* Action buttons */}
+              <div className="flex gap-2">
+                <button
+                  onClick={() => doScan(watchDir)}
+                  disabled={scanStatus === 'scanning' || uploading}
+                  className="flex-1 py-1.5 rounded-lg bg-primary/20 hover:bg-primary/30 text-primary text-xs font-medium transition-colors disabled:opacity-40 flex items-center justify-center gap-1.5"
+                >
+                  <RefreshCw size={12} className={scanStatus === 'scanning' ? 'animate-spin' : ''} />
+                  สแกนตอนนี้
+                </button>
+                <button
+                  onClick={stopWatching}
+                  className="px-3 py-1.5 rounded-lg border border-white/10 text-white/40 hover:text-white/70 text-xs transition-colors"
+                >
+                  หยุด
+                </button>
+              </div>
+            </div>
+          )}
+        </div>
+      )}
+      {/* ──────────────────────────────────────────────────────────────────── */}
 
       {/* Delete selected */}
       {selectMode && selectedIds.size > 0 && (
@@ -353,7 +533,7 @@ export default function EventDetail() {
         <div className="text-center text-white/30 py-16">
           <Upload size={48} className="mx-auto mb-3 opacity-30" />
           <p>ยังไม่มีรูปใน Event นี้</p>
-          <p className="text-sm mt-1">กดปุ่ม "อัพโหลดรูป" เพื่อเริ่มต้น</p>
+          <p className="text-sm mt-1">กดปุ่ม "อัพโหลดรูป" หรือ "ผูกโฟลเดอร์อัตโนมัติ" เพื่อเริ่มต้น</p>
         </div>
       )}
 
