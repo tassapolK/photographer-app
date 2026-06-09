@@ -56,6 +56,7 @@ export default function EventDetail() {
   const [uploading, setUploading] = useState(false);
   const [uploadProgress, setUploadProgress] = useState({ done: 0, total: 0 });
   const [uploadErrors, setUploadErrors] = useState([]); // file names that failed
+  const [failedFiles, setFailedFiles] = useState([]);   // actual File objects for retry
   const [selectedIds, setSelectedIds] = useState(new Set());
   const [selectMode, setSelectMode] = useState(false);
   const { loading: faceLoading, detectDescriptors } = useFaceApi();
@@ -153,10 +154,12 @@ export default function EventDetail() {
 
     setUploading(true);
     setUploadErrors([]);
+    setFailedFiles([]);
     setUploadProgress({ done: 0, total: fileArray.length });
 
     const CONCURRENCY = 3;
-    const errors = [];
+    const errorNames = [];
+    const errorFiles = []; // keep File objects for retry
     let done = 0;
 
     for (let i = 0; i < fileArray.length; i += CONCURRENCY) {
@@ -168,7 +171,8 @@ export default function EventDetail() {
         signData = await api.get(`/photos/event/${event.slug}/save`);
       } catch (e) {
         console.error('Could not get upload signature:', e.message);
-        errors.push(...chunk.map(f => f.name));
+        errorNames.push(...chunk.map(f => f.name));
+        errorFiles.push(...chunk);
         done += chunk.length;
         setUploadProgress({ done, total: fileArray.length });
         continue;
@@ -180,7 +184,8 @@ export default function EventDetail() {
           await api.post(`/photos/event/${event.slug}/save`, { photos: [photoInfo] });
         } catch (e) {
           console.error(`Failed: ${file.name}`, e.message);
-          errors.push(file.name);
+          errorNames.push(file.name);
+          errorFiles.push(file);
         }
         done++;
         setUploadProgress({ done, total: fileArray.length });
@@ -188,10 +193,12 @@ export default function EventDetail() {
     }
 
     setUploading(false);
-    if (errors.length > 0) setUploadErrors([...errors]);
+    if (errorNames.length > 0) {
+      setUploadErrors([...errorNames]);
+      setFailedFiles([...errorFiles]); // store for retry
+    }
     qc.invalidateQueries(['photos', id]);
     qc.invalidateQueries(['event', id]);
-    // Reset file input so same files can be re-uploaded if needed
     if (fileInput.current) fileInput.current.value = '';
   }, [event, faceLoading, detectDescriptors, id]);
 
@@ -285,16 +292,27 @@ export default function EventDetail() {
           <div className="flex items-center gap-2 mb-2 text-red-400">
             <AlertCircle size={16} />
             <span className="text-sm font-medium">อัพโหลดไม่สำเร็จ {uploadErrors.length} รูป</span>
-            <button onClick={() => setUploadErrors([])} className="ml-auto text-white/30 hover:text-white">
+            <button
+              onClick={() => { setUploadErrors([]); setFailedFiles([]); }}
+              className="ml-auto text-white/30 hover:text-white"
+            >
               <X size={14} />
             </button>
           </div>
-          <ul className="space-y-0.5">
+          <ul className="space-y-0.5 mb-3">
             {uploadErrors.map((name, i) => (
               <li key={i} className="text-xs text-red-300/70 truncate">• {name}</li>
             ))}
           </ul>
-          <p className="text-xs text-white/30 mt-2">กดปุ่ม "อัพโหลดรูป" อีกครั้งเพื่อลองใหม่</p>
+          {/* Retry button — re-uploads only the failed files, no re-select needed */}
+          <button
+            onClick={() => handleUpload(failedFiles)}
+            disabled={uploading}
+            className="w-full py-2 rounded-lg bg-red-500/20 hover:bg-red-500/30 border border-red-500/40 text-red-300 text-sm font-medium transition-colors flex items-center justify-center gap-2"
+          >
+            <Upload size={14} />
+            ลองใหม่ {uploadErrors.length} รูปนี้
+          </button>
         </div>
       )}
 
