@@ -374,10 +374,9 @@ export default function EventDetail() {
       </div>
 
       {/* ── Folder Auto-Watch ──────────────────────────────────────────────── */}
-      {'showDirectoryPicker' in window && (
-        <div className="mb-4">
+      <div className="mb-4">
           {!watchDir ? (
-            /* Link folder button */
+            /* Link folder button — always shown; unsupported browsers get an alert on click */
             <button
               onClick={handleSelectFolder}
               disabled={uploading}
@@ -431,8 +430,7 @@ export default function EventDetail() {
               </div>
             </div>
           )}
-        </div>
-      )}
+      </div>
       {/* ──────────────────────────────────────────────────────────────────── */}
 
       {/* Delete selected */}
